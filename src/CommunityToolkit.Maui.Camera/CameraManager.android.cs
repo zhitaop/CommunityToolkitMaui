@@ -29,6 +29,7 @@ partial class CameraManager
 	ProcessCameraProvider? processCameraProvider;
 	ImageCapture? imageCapture;
 	ImageCallBack? imageCallback;
+	Stream? imageCaptureStream;
 	VideoCapture? videoCapture;
 	Recorder? videoRecorder;
 	Recording? videoRecording;
@@ -63,6 +64,9 @@ partial class CameraManager
 	public void Dispose()
 	{
 		CleanupVideoRecordingResources();
+
+		imageCaptureStream?.Dispose();
+		imageCaptureStream = null;
 
 		camera?.Dispose();
 		camera = null;
@@ -286,6 +290,22 @@ partial class CameraManager
 		ArgumentNullException.ThrowIfNull(cameraExecutor);
 		ArgumentNullException.ThrowIfNull(imageCallback);
 
+		//imageCaptureStream?.Dispose();
+		//imageCaptureStream = new MemoryStream();
+
+		//var metaData = new ImageCapture.Metadata
+		//{
+		//	ReversedHorizontal = cameraView.SelectedCamera?.Position is CameraPosition.Front
+		//};
+
+		//var outputOptions = new ImageCapture.OutputFileOptions.Builder(imageCaptureStream)
+		//	.SetMetadata(metaData)
+		//	.Build();
+
+		//var imageSavedCallback = new ImageSavedCallback(this, cameraView, imageCaptureStream);
+
+		//imageCapture?.TakePicture(outputOptions, cameraExecutor, imageSavedCallback);
+
 		imageCapture?.TakePicture(cameraExecutor, imageCallback);
 		return ValueTask.CompletedTask;
 	}
@@ -493,6 +513,42 @@ partial class CameraManager
 		{
 			base.OnError(exception);
 			cameraView.OnMediaCapturedFailed(exception?.Message ?? "An unknown error occurred.");
+		}
+	}
+
+	sealed class ImageSavedCallback(CameraManager manager, ICameraView cameraView, Stream capturedStream) : Object, ImageCapture.IOnImageSavedCallback
+	{
+		public void OnImageSaved(ImageCapture.OutputFileResults outputFileResults)
+		{
+			if (capturedStream.CanSeek)
+			{
+				capturedStream.Position = 0;
+			}
+
+			// Hand the stream off to the MAUI layer
+			cameraView.OnMediaCaptured(capturedStream);
+
+			// CLEAR THE REFERENCE: The UI now owns the stream. 
+			// We null it out here so CameraManager.Dispose() doesn't kill it.
+			// We only null it out if the manager is still pointing at OUR stream
+			if (ReferenceEquals(manager.imageCaptureStream, capturedStream))
+			{
+				manager.imageCaptureStream = null;
+			}
+		}
+
+		public void OnError(ImageCaptureException exception)
+		{
+			cameraView.OnMediaCapturedFailed(exception?.Message ?? "An unknown error occurred.");
+
+			// Clean up the stream locally because the capture failed
+			capturedStream?.Dispose();
+
+			// Clear the manager's reference
+			if (ReferenceEquals(manager.imageCaptureStream, capturedStream))
+			{
+				manager.imageCaptureStream = null;
+			}
 		}
 	}
 
